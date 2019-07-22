@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "commonjs",
+    "lib": ["esnext"],
+
+    "outDir": "./lib",
+    "rootDir": "./src",
+
+    "strict": true,
+
+    "esModuleInterop": true
+  },
+  "exclude": ["**/*.spec.ts"]
+}
