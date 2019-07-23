@@ -4,6 +4,19 @@ export class Builder {
   checker: ts.TypeChecker;
   relations = new Map<string, string[]>();
   dump: any = {};
+  // Debugging
+  // depth = 0;
+  // in() {
+  //   this.depth++;
+  // }
+  // out() {
+  //   this.depth--;
+  // }
+  // log(node: ts.Node) {
+  //   const spaces = " ".repeat(this.depth);
+  //   const kind = ts.SyntaxKind[node.kind];
+  //   console.log(`${spaces}${kind} ${node.getText()}`);
+  // }
   constructor(public program: ts.Program) {
     this.checker = program.getTypeChecker();
   }
@@ -76,18 +89,46 @@ ${Object.entries(value)
     }
     if (ts.isCallExpression(node)) {
       const argTypes = node.arguments.map(arg => this.inferType(arg));
-      return `(...args: [${argTypes.join(", ")}]) => any`;
+      return `((...args: [${argTypes.join(", ")}]) => any)`;
     }
     return "any";
   }
   protected visit(node: ts.Node) {
-    if (ts.isBinaryExpression(node)) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.name)
+    ) {
+      if (
+        ts.isIdentifier(node.initializer) &&
+        this.isExternal(node.initializer)
+      ) {
+        this.relate([node.initializer], node.name);
+      } else if (ts.isPropertyAccessExpression(node.initializer)) {
+        const flat = this.flattenPropertyAccess(node.initializer);
+        if (flat && this.isExternal(flat[0])) {
+          this.relate(flat, node.name);
+        }
+      }
+    } else if (ts.isBinaryExpression(node)) {
       if (ts.isIdentifier(node.left) && this.isExternal(node.left)) {
         this.relate([node.left], node.right);
-      } else if (ts.isPropertyAccessExpression(node.left)) {
-        const flat = this.flattenPropertyAccess(node.left);
-        if (flat && this.isExternal(flat[0])) {
-          this.relate(flat, node.right);
+      } else {
+        if (ts.isPropertyAccessExpression(node.left)) {
+          const flat = this.flattenPropertyAccess(node.left);
+          if (flat && this.isExternal(flat[0])) {
+            this.relate(flat, node.right);
+          }
+        }
+      }
+      if (ts.isIdentifier(node.right) && this.isExternal(node.right)) {
+        this.relate([node.right], node.left);
+      } else {
+        if (ts.isPropertyAccessExpression(node.right)) {
+          const flat = this.flattenPropertyAccess(node.right);
+          if (flat && this.isExternal(flat[0])) {
+            this.relate(flat, node.left);
+          }
         }
       }
     } else if (ts.isCallExpression(node)) {
@@ -103,7 +144,10 @@ ${Object.entries(value)
         }
       }
     }
+    // this.log(node);
+    // this.in();
     ts.forEachChild(node, node => this.visit(node));
+    // this.out();
   }
   protected flattenPropertyAccess(
     node: ts.PropertyAccessExpression
