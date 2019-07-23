@@ -26,9 +26,13 @@ export class Builder {
     });
   }
   public print() {
-    return Object.entries(this.dump)
-      .map(([key, value]) => `declare let ${key}: ${printType(value as any)};`)
-      .join("\n");
+    return (
+      Object.entries(this.dump)
+        .map(
+          ([key, value]) => `declare let ${key}: ${printType(value as any)};`
+        )
+        .join("\n") + "\n"
+    );
     function printType(value: object | string): string {
       if (typeof value === "string") return value;
       return `{ \
@@ -46,6 +50,30 @@ ${Object.entries(value)
       this.relations.get(key)!.push(type);
   }
   protected inferType(node: ts.Expression) {
+    if (ts.isNumericLiteral(node)) {
+      return "number";
+    }
+    if (ts.isStringLiteralLike(node)) {
+      return "string";
+    }
+    if (
+      ts.isLiteralTypeNode(node) &&
+      (node.literal.kind === ts.SyntaxKind.TrueKeyword ||
+        node.literal.kind === ts.SyntaxKind.FalseKeyword)
+    ) {
+      return "boolean";
+    }
+    if (ts.isIdentifier(node)) {
+      const symbol = this.checker.getSymbolAtLocation(node);
+      if (symbol) {
+        return this.checker.typeToString(
+          this.checker.getTypeOfSymbolAtLocation(
+            symbol,
+            symbol.valueDeclaration!
+          )
+        );
+      }
+    }
     return "any";
   }
   protected visit(node: ts.Node) {
