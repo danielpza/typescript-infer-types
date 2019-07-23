@@ -11,4 +11,5 @@ export async function main(glob: string) {
   });
   const builder = new Builder(program);
   builder.analyze();
+  process.stdout.write(builder.print());
 }

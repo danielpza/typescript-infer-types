@@ -19,7 +19,7 @@ export class Builder {
       const [last] = keys.splice(keys.length - 1);
       let cont = this.dump;
       for (const key of keys) {
-        cont[key] = {};
+        if (cont[key] === undefined) cont[key] = {};
         cont = cont[key];
       }
       cont[last] = type;
@@ -37,8 +37,8 @@ export class Builder {
       if (typeof value === "string") return value;
       return `{ \
 ${Object.entries(value)
-  .map(([key, value]) => `${key}: ${printType(value as any)},`)
-  .join("\n")} \
+  .map(([key, value]) => `${key}: ${printType(value as any)}`)
+  .join(", ")} \
 }`;
     }
   }
@@ -49,7 +49,7 @@ ${Object.entries(value)
     if (type !== "any" && !this.relations.get(key)!.includes(type))
       this.relations.get(key)!.push(type);
   }
-  protected inferType(node: ts.Expression) {
+  protected inferType(node: ts.Expression): string {
     if (ts.isNumericLiteral(node)) {
       return "number";
     }
@@ -74,6 +74,10 @@ ${Object.entries(value)
         );
       }
     }
+    if (ts.isCallExpression(node)) {
+      const argTypes = node.arguments.map(arg => this.inferType(arg));
+      return `(...args: [${argTypes.join(", ")}]) => any`;
+    }
     return "any";
   }
   protected visit(node: ts.Node) {
@@ -84,6 +88,18 @@ ${Object.entries(value)
         const flat = this.flattenPropertyAccess(node.left);
         if (flat && this.isExternal(flat[0])) {
           this.relate(flat, node.right);
+        }
+      }
+    } else if (ts.isCallExpression(node)) {
+      if (
+        ts.isIdentifier(node.expression) &&
+        this.isExternal(node.expression)
+      ) {
+        this.relate([node.expression], node);
+      } else if (ts.isPropertyAccessExpression(node.expression)) {
+        const flat = this.flattenPropertyAccess(node.expression);
+        if (flat && this.isExternal(flat[0])) {
+          this.relate(flat, node);
         }
       }
     }
