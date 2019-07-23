@@ -11,7 +11,7 @@ test("builder", () => {
   });
   const builder = new Builder(program);
   builder.analyze();
-  const actual = builder.getDefinitions();
+  const actual = builder.print();
   const expected = readFileSync(
     resolve(__dirname, "__fixtures/expected.d.ts"),
     "utf8"
