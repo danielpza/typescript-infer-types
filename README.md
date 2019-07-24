@@ -46,3 +46,8 @@ declare let EXTERNAL: { DEPP: { VAR: boolean }, foo: ((...args: [number]) => any
 declare let BAR: any;
 declare let foo: ((...args: [string]) => any);
 ```
+
+## Roadmap
+
+- [ ] Anotate variables (fix missing types in source code)
+- [ ] ...sugestions?
