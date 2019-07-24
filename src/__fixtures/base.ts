@@ -14,4 +14,4 @@ d = 4;
 
 c = EXTERNAL.BARR;
 
-foo("asdf");
+foo("asdf", c);
