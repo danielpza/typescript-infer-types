@@ -1,6 +1,6 @@
 workflow "Test on push" {
-  on = "push"
   resolves = ["GitHub Action for npm-1"]
+  on = "pull_request"
 }
 
 action "GitHub Action for npm" {
@@ -15,8 +15,8 @@ action "GitHub Action for npm-1" {
 }
 
 workflow "Build and deploy on tag" {
-  on = "release"
   resolves = ["Deploy"]
+  on = "release"
 }
 
 action "Install" {
