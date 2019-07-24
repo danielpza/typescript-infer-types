@@ -1,22 +1,21 @@
 import ts from "typescript";
+import { DisjointSet } from "./disjoint-set";
+import arrayUnion from "array-union";
+
+const DISJOINTSET_PARENT_KEY = "__disjointset_parent";
+
+class Node {
+  constructor(public types: string[] = []) {}
+  join(other: Node) {
+    other.types = this.types = arrayUnion(this.types, other.types);
+  }
+}
+
+type IdentifierLike = ts.Identifier | ts.PropertyAccessExpression;
 
 export class Builder {
   checker: ts.TypeChecker;
-  relations = new Map<string, string[]>();
-  dump: any = {};
-  // Debugging
-  // depth = 0;
-  // in() {
-  //   this.depth++;
-  // }
-  // out() {
-  //   this.depth--;
-  // }
-  // log(node: ts.Node) {
-  //   const spaces = " ".repeat(this.depth);
-  //   const kind = ts.SyntaxKind[node.kind];
-  //   console.log(`${spaces}${kind} ${node.getText()}`);
-  // }
+  externals = new Map<IdentifierLike, DisjointSet<Node>>();
   constructor(public program: ts.Program) {
     this.checker = program.getTypeChecker();
   }
@@ -26,21 +25,23 @@ export class Builder {
         this.visit(sourceFile);
       }
     }
-    this.relations.forEach((types, id) => {
+  }
+  public print() {
+    const dump = {} as any;
+    this.externals.forEach((ds, ident) => {
+      const types = ds.node.types.filter(id => id !== "any");
       const type = types.length === 0 ? "any" : types.join(" | ");
-      const keys = id.split(".");
+      const keys = this.flattenIdentifierLike(ident)!.map(node => node.text);
       const [last] = keys.splice(keys.length - 1);
-      let cont = this.dump;
+      let cont = dump;
       for (const key of keys) {
         if (cont[key] === undefined) cont[key] = {};
         cont = cont[key];
       }
       cont[last] = type;
     });
-  }
-  public print() {
     return (
-      Object.entries(this.dump)
+      Object.entries(dump)
         .map(
           ([key, value]) => `declare let ${key}: ${printType(value as any)};`
         )
@@ -55,43 +56,53 @@ ${Object.entries(value)
 }`;
     }
   }
-  protected relate(binding: ts.Identifier[], exp: ts.Expression) {
-    const key = binding.map(bind => bind.getText()).join(".");
-    if (!this.relations.has(key)) this.relations.set(key, []);
-    const type = this.inferType(exp);
-    if (type !== "any" && !this.relations.get(key)!.includes(type))
-      this.relations.get(key)!.push(type);
+  protected ensureExternal(binding: IdentifierLike) {
+    if (!this.externals.has(binding))
+      this.externals.set(binding, new DisjointSet(new Node()));
+  }
+  protected getDisjointSet(node: ts.Expression): DisjointSet<Node> | undefined {
+    const symbol = this.checker.getSymbolAtLocation(node) as
+      | (ts.Symbol & { [DISJOINTSET_PARENT_KEY]?: DisjointSet<Node> })
+      | undefined;
+    if (symbol) {
+      if (symbol[DISJOINTSET_PARENT_KEY]) {
+        return symbol[DISJOINTSET_PARENT_KEY];
+      }
+      return (symbol[DISJOINTSET_PARENT_KEY] = new DisjointSet(
+        new Node([this.inferType(node)])
+      ));
+    } else if (this.isExternalIdentifier(node)) {
+      this.ensureExternal(node);
+      return this.externals.get(node);
+    }
+    return undefined;
+  }
+  protected relate(left: ts.Expression, right: ts.Expression) {
+    const leftSet = this.getDisjointSet(left);
+    const rightSet = this.getDisjointSet(right);
+    if (leftSet && !rightSet) {
+      leftSet.node.types = arrayUnion(leftSet.node.types, [
+        this.inferType(right)
+      ]);
+    } else if (!leftSet && rightSet) {
+      rightSet.node.types = arrayUnion(rightSet.node.types, [
+        this.inferType(left)
+      ]);
+    } else if (leftSet && rightSet && !leftSet.isSameSet(rightSet)) {
+      leftSet.node.join(rightSet.node);
+      leftSet.join(rightSet);
+    }
   }
   protected inferType(node: ts.Expression): string {
-    if (ts.isNumericLiteral(node)) {
-      return "number";
-    }
-    if (ts.isStringLiteralLike(node)) {
-      return "string";
-    }
-    if (
-      ts.isLiteralTypeNode(node) &&
-      (node.literal.kind === ts.SyntaxKind.TrueKeyword ||
-        node.literal.kind === ts.SyntaxKind.FalseKeyword)
-    ) {
-      return "boolean";
-    }
-    if (ts.isIdentifier(node)) {
-      const symbol = this.checker.getSymbolAtLocation(node);
-      if (symbol) {
-        return this.checker.typeToString(
-          this.checker.getTypeOfSymbolAtLocation(
-            symbol,
-            symbol.valueDeclaration!
-          )
-        );
-      }
-    }
     if (ts.isCallExpression(node)) {
       const argTypes = node.arguments.map(arg => this.inferType(arg));
       return `((...args: [${argTypes.join(", ")}]) => any)`;
     }
-    return "any";
+    return this.checker
+      .typeToString(
+        this.checker.getApparentType(this.checker.getTypeAtLocation(node))
+      )
+      .toLowerCase();
   }
   protected visit(node: ts.Node) {
     if (
@@ -99,64 +110,39 @@ ${Object.entries(value)
       node.initializer &&
       ts.isIdentifier(node.name)
     ) {
-      if (
-        ts.isIdentifier(node.initializer) &&
-        this.isExternal(node.initializer)
-      ) {
-        this.relate([node.initializer], node.name);
-      } else if (ts.isPropertyAccessExpression(node.initializer)) {
-        const flat = this.flattenPropertyAccess(node.initializer);
-        if (flat && this.isExternal(flat[0])) {
-          this.relate(flat, node.name);
-        }
-      }
+      this.relate(node.name, node.initializer);
+      if (this.isExternalIdentifier(node.initializer))
+        this.ensureExternal(node.initializer);
     } else if (ts.isBinaryExpression(node)) {
-      if (ts.isIdentifier(node.left) && this.isExternal(node.left)) {
-        this.relate([node.left], node.right);
-      } else {
-        if (ts.isPropertyAccessExpression(node.left)) {
-          const flat = this.flattenPropertyAccess(node.left);
-          if (flat && this.isExternal(flat[0])) {
-            this.relate(flat, node.right);
-          }
-        }
-      }
-      if (ts.isIdentifier(node.right) && this.isExternal(node.right)) {
-        this.relate([node.right], node.left);
-      } else {
-        if (ts.isPropertyAccessExpression(node.right)) {
-          const flat = this.flattenPropertyAccess(node.right);
-          if (flat && this.isExternal(flat[0])) {
-            this.relate(flat, node.left);
-          }
-        }
-      }
-    } else if (ts.isCallExpression(node)) {
-      if (
-        ts.isIdentifier(node.expression) &&
-        this.isExternal(node.expression)
-      ) {
-        this.relate([node.expression], node);
-      } else if (ts.isPropertyAccessExpression(node.expression)) {
-        const flat = this.flattenPropertyAccess(node.expression);
-        if (flat && this.isExternal(flat[0])) {
-          this.relate(flat, node);
-        }
-      }
+      this.relate(node.left, node.right);
+      if (this.isExternalIdentifier(node.left)) this.ensureExternal(node.left);
+      if (this.isExternalIdentifier(node.right))
+        this.ensureExternal(node.right);
+    } else if (
+      ts.isCallExpression(node) &&
+      this.isExternalIdentifier(node.expression)
+    ) {
+      this.ensureExternal(node.expression);
+      this.relate(node.expression, node);
     }
-    // this.log(node);
-    // this.in();
     ts.forEachChild(node, node => this.visit(node));
-    // this.out();
   }
-  protected flattenPropertyAccess(
-    node: ts.PropertyAccessExpression
+  protected isExternalIdentifier(node: ts.Node): node is IdentifierLike {
+    if (!(ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)))
+      return false;
+    const root = this.flattenIdentifierLike(node);
+    if (root === undefined) return false;
+    return this.isExternal(root[0]);
+  }
+  protected flattenIdentifierLike(
+    node: IdentifierLike
   ): ts.Identifier[] | undefined {
+    if (ts.isIdentifier(node)) return [node];
     if (ts.isIdentifier(node.expression)) {
       return [node.expression, node.name];
     }
     if (ts.isPropertyAccessExpression(node.expression)) {
-      const flat = this.flattenPropertyAccess(node.expression);
+      const flat = this.flattenIdentifierLike(node.expression);
       if (flat === undefined) return undefined;
       return [...flat, node.name];
     }
@@ -165,5 +151,18 @@ ${Object.entries(value)
   protected isExternal(node: ts.Node) {
     const symbol = this.checker.getSymbolAtLocation(node);
     return !symbol; // TODO no symbol means external, should check veracity
+  }
+  // Debugging
+  depth = 0;
+  in() {
+    this.depth++;
+  }
+  out() {
+    this.depth--;
+  }
+  log(node: ts.Node) {
+    const spaces = " ".repeat(this.depth);
+    const kind = ts.SyntaxKind[node.kind];
+    console.log(`${spaces}${kind} ${node.getText()}`);
   }
 }

@@ -24,6 +24,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "array-union": "^2.1.0",
     "globby": "^10.0.1",
     "typescript": "^3.5.3"
   },
