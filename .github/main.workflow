@@ -32,21 +32,21 @@ action "Deploy" {
   secrets = ["NPM_TOKEN"]
 }
 
-action "Master" {
+action "On Master" {
   uses = "actions/bin/filter@0dbb077f64d0ec1068a644d25c71b1db66148a24"
   needs = ["GitHub Action for npm-1"]
   args = "branch master"
 }
 
-action "Release" {
+action "On Release" {
   uses = "actions/bin/filter@0dbb077f64d0ec1068a644d25c71b1db66148a24"
-  needs = ["Master"]
   args = "tag v*"
+  needs = ["On Master"]
 }
 
 action "Publish" {
   uses = "actions/npm@59b64a598378f31e49cb76f27d6f3312b582f680"
-  needs = ["Release"]
   args = "publish"
   secrets = ["NPM_TOKEN"]
+  needs = ["On Release"]
 }
