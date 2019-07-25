@@ -19,7 +19,7 @@
     "typescript-infer-types": "lib/cli.js"
   },
   "scripts": {
-    "prepare": "rm -rf lib && tsc",
+    "prepare": "tsc",
     "release": "standard-version",
     "test": "jest"
   },
